@@ -133,35 +133,81 @@ export function setCookieFn(
         cookieParts.push('; path=/');
     }
 
+    let domain = '';
+    let secure = false;
+
     if ( trusted ) {
         if ( options.domain ) {
-            let domain = options.domain;
-            if ( /^\/.+\//.test(domain) ) {
+            let domainOpt = options.domain;
+            if ( /^\/.+\//.test(domainOpt) ) {
                 const baseURL = new URL(document.baseURI);
-                const reDomain = new RegExp(domain.slice(1, -1));
+                const reDomain = new RegExp(domainOpt.slice(1, -1));
                 const match = reDomain.exec(baseURL.hostname);
-                domain = match ? match[0] : undefined;
+                domainOpt = match ? match[0] : undefined;
             }
-            if ( domain ) {
+            if ( domainOpt ) {
+                domain = domainOpt;
                 cookieParts.push(`; domain=${domain}`);
             }
         }
-        cookieParts.push('; Secure');
+        secure = true;
     } else if ( /^__(Host|Secure)-/.test(name) ) {
+        secure = true;
+    }
+    if ( secure ) {
         cookieParts.push('; Secure');
     }
 
-    try {
-        document.cookie = cookieParts.join('');
-    } catch {
+    const setWithDocumentCookie = () => {
+        try {
+            document.cookie = cookieParts.join('');
+        } catch {
+        }
+        const done = getCookieFn(name) === value;
+        if ( done && options.reload ) {
+            window.location.reload();
+        }
+        return done;
+    };
+
+    const cookieStoreAPI = globalThis.cookieStore;
+    if ( cookieStoreAPI && typeof cookieStoreAPI.set === 'function' ) {
+        const cookieInit = { name, value };
+        if ( expires !== '' ) {
+            const expiresDate = new Date(expires);
+            if ( Number.isNaN(expiresDate.getTime()) === false ) {
+                cookieInit.expires = expiresDate;
+            }
+        }
+        if ( path === '/' ) {
+            cookieInit.path = '/';
+        }
+        if ( trusted && domain !== '' ) {
+            cookieInit.domain = domain;
+        }
+        if ( secure ) {
+            cookieInit.secure = true;
+        }
+        const verifyWithCookieStore = typeof cookieStoreAPI.get === 'function';
+        const promise = Promise.resolve(cookieStoreAPI.set(cookieInit)).then(() => {
+            if ( verifyWithCookieStore ) {
+                return cookieStoreAPI.get(name).then(details => {
+                    const done = details !== null && details.value === value;
+                    if ( done && options.reload ) {
+                        window.location.reload();
+                    }
+                    return done;
+                });
+            }
+            if ( options.reload ) {
+                window.location.reload();
+            }
+            return true;
+        }).catch(() => setWithDocumentCookie());
+        return promise;
     }
 
-    const done = getCookieFn(name) === value;
-    if ( done && options.reload ) {
-        window.location.reload();
-    }
-
-    return done;
+    return setWithDocumentCookie();
 }
 registerScriptlet(setCookieFn, {
     name: 'set-cookie.fn',
@@ -217,7 +263,13 @@ export function setCookie(
         safe.getExtraArgs(Array.from(arguments), 3)
     );
 
-    if ( done ) {
+    if ( done && typeof done.then === 'function' ) {
+        done.then(result => {
+            if ( result ) {
+                safe.uboLog(logPrefix, 'Done');
+            }
+        }).catch(() => {});
+    } else if ( done ) {
         safe.uboLog(logPrefix, 'Done');
     }
 }
@@ -311,7 +363,13 @@ export function trustedSetCookie(
         safeSelf().getExtraArgs(Array.from(arguments), 4)
     );
 
-    if ( done ) {
+    if ( done && typeof done.then === 'function' ) {
+        done.then(result => {
+            if ( result ) {
+                safe.uboLog(logPrefix, 'Done');
+            }
+        }).catch(() => {});
+    } else if ( done ) {
         safe.uboLog(logPrefix, 'Done');
     }
 }
