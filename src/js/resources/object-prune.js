@@ -33,10 +33,83 @@ function objectFindOwnerFn(
     prune = false
 ) {
     const safe = safeSelf();
+    const parseEqualityValue = rawValue => {
+        switch ( rawValue ) {
+        case 'true': return true;
+        case 'false': return false;
+        case 'null': return null;
+        case 'undefined': return undefined;
+        }
+        if ( /^-?\d+(?:\.\d+)?$/.test(rawValue) ) {
+            return parseFloat(rawValue);
+        }
+        if ( rawValue.length > 1 && rawValue.charCodeAt(0) === 0x2F ) {
+            const lastSlashPos = rawValue.lastIndexOf('/');
+            if ( lastSlashPos > 0 ) {
+                const pattern = rawValue.slice(1, lastSlashPos);
+                const flags = rawValue.slice(lastSlashPos + 1);
+                try {
+                    return new safe.RegExp(pattern, flags);
+                } catch {
+                }
+            }
+        }
+        return rawValue;
+    };
+    const matchesEqualityValue = (value, expected) => {
+        if ( expected instanceof safe.RegExp ) {
+            if ( typeof value !== 'string' ) { return false; }
+            try {
+                expected.lastIndex = 0;
+            } catch {
+            }
+            return safe.RegExp_test.call(expected, value);
+        }
+        return value === expected;
+    };
+    const consumeEqualityToken = (owner, chain, prop) => {
+        let pos = chain.indexOf('.');
+        let rawValue;
+        let remainder;
+        if ( pos === -1 ) {
+            rawValue = chain;
+            remainder = '';
+        } else {
+            rawValue = chain.slice(0, pos);
+            remainder = chain.slice(pos + 1);
+        }
+        const expected = parseEqualityValue(rawValue);
+        const processNested = value => {
+            if ( remainder === '' ) { return true; }
+            if ( typeof value !== 'object' || value === null ) { return false; }
+            return objectFindOwnerFn(value, remainder, prune);
+        };
+        if ( prop === '[=]' ) {
+            if ( Array.isArray(owner) ) {
+                for ( const item of owner ) {
+                    if ( matchesEqualityValue(item, expected) === false ) { continue; }
+                    if ( processNested(item) ) { return true; }
+                }
+                return false;
+            }
+            if ( remainder !== '' ) {
+                if ( matchesEqualityValue(owner, expected) === false ) { return false; }
+                return processNested(owner);
+            }
+            return matchesEqualityValue(owner, expected);
+        }
+        if ( typeof owner !== 'object' || owner === null ) { return false; }
+        for ( const key of Object.keys(owner) ) {
+            if ( safe.Object_hasOwn(owner, key) === false ) { continue; }
+            const value = owner[key];
+            if ( matchesEqualityValue(value, expected) === false ) { continue; }
+            if ( processNested(value) ) { return true; }
+        }
+        return false;
+    };
     let owner = root;
     let chain = path;
     for (;;) {
-        if ( typeof owner !== 'object' || owner === null  ) { return false; }
         const pos = chain.indexOf('.');
         if ( pos === -1 ) {
             if ( prune === false ) {
@@ -57,6 +130,10 @@ function objectFindOwnerFn(
         }
         const prop = chain.slice(0, pos);
         const next = chain.slice(pos + 1);
+        if ( prop === '[=]' || prop === '{=}' ) {
+            return consumeEqualityToken(owner, next, prop);
+        }
+        if ( typeof owner !== 'object' || owner === null ) { return false; }
         let found = false;
         if ( prop === '[-]' && Array.isArray(owner) ) {
             let i = owner.length;
